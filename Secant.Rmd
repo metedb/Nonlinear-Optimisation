@@ -1,0 +1,79 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r}
+library(ggplot2)
+library(data.table)
+
+f <- function(x){
+  (x^3)*cos(x)*sin(x)+(3*(x^2)*sin(x))-3*x
+}
+
+fx <- expression((x^3)*cos(x)*sin(x)+(3*(x^2)*sin(x))-3*x )
+secant<-function(x_one,x_two,e,func){
+   k = 2
+   v <- c(x_one, x_two)
+   first_derivative = D(func, 'x')
+      
+  repeat {
+    x = c(v[k-1],v[k])
+    k_minus_1_derivative = eval(first_derivative)[1]
+    k_derivative = eval(first_derivative)[2]
+
+    v[k + 1] = v[k] - ((k_derivative)*(v[k]-v[k-1]))/(k_derivative-k_minus_1_derivative)
+    
+    k = k + 1
+    
+    if(abs(k_derivative) <= e) break
+  }
+
+  return(v)
+  
+}
+
+iterations1<-secant(-5,-4.8,0.001,fx)
+last_iteration1 <- iterations1[length(iterations1)]
+final_point_1 = f(iterations1[length(iterations1)])
+final_df1 <- data.table(last_iteration1, final_point_1)
+iterations_and_values1=data.table(c(0:(length(iterations1)-1)),iterations1,f(iterations1))
+colnames(iterations_and_values1) = c("iteration","x","fx")
+
+
+ggplot(data = data.frame(x = 0), mapping = aes(x = x)) + stat_function(fun = f) + xlim(-10,10) + geom_point(data = final_df1, aes(x = last_iteration1, y = final_point_1), colour = "blue", size = 2.5)
+iterations_and_values1
+
+
+
+iterations2<-secant(-9.5,-9.0,0.005,fx)
+last_iteration2 <- iterations2[length(iterations2)]
+final_point_2 = f(iterations2[length(iterations2)])
+final_df2 <- data.table(last_iteration2, final_point_2)
+iterations_and_values2=data.table(c(0:(length(iterations2)-1)),iterations2,f(iterations2))
+colnames(iterations_and_values2) = c("iteration","x","fx")
+
+ggplot(data = data.frame(x = 0), mapping = aes(x = x)) + stat_function(fun = f) + xlim(-10,10) + geom_point(data = final_df2, aes(x = last_iteration2, y = final_point_2), colour = "blue", size = 2.5)
+iterations_and_values2
+
+
+iterations3<-secant(7,8,0.0005,fx)
+last_iteration3 <- iterations3[length(iterations3)]
+final_point_3 = f(iterations3[length(iterations3)])
+final_df3 <- data.table(last_iteration3, final_point_3)
+iterations_and_values3=data.table(c(0:(length(iterations3)-1)),iterations3,f(iterations3))
+colnames(iterations_and_values3) = c("iteration","x","fx")
+
+
+ggplot(data = data.frame(x = 0), mapping = aes(x = x)) + stat_function(fun = f) + xlim(-10,10) + geom_point(data = final_df3, aes(x = last_iteration3, y = final_point_3), colour = "blue", size = 2.5)
+iterations_and_values3
+
+```
+
