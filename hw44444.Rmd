@@ -1,0 +1,401 @@
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+
+```
+
+---
+title: "Modeling Domestic Electricity Consumption"
+output: html_document
+---
+
+Electricity energy is a vital indicator of a nations social, economic and technological advancement level. The means of production require electricity, our daily activites mostly depend on electricity...and so on. So it is crucial to come up with a model that can accurately explain the time-series behaviour of such a measure; so that the supply and demand in the electricity market can be balanced and no resources would be wasted. For instance, overestimation of the electricity consumption would lead to superfluous idle capacity which means wasted financial resources, whereas underestimation would lead the higher operation costs for the energy supplier and would cause potential energy outages. 
+
+In this study, I aim to model the electricity consumption of Turkey (measured in mWh). First, stationarity will be obtained via certain iterations. After that, an ARMA model will be applied to stationary data. Lastly, a 2 week forecast will be made, together with final remarks.
+
+The data is hourly; for ease of study, hourly data will be converted to daily means. The interval of interest is from 1/01/2017 to 8/01/2021. Once the model is complete, a 2 week forecast will be made.
+
+#### Data Manipulation
+We start by manipulating our data, also converging it from hourly to daily means.
+```{r}
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(lubridate)
+library(data.table)
+library(zoo)
+library(forecast)
+library(xts)
+library(urca)
+library(gratia)
+library(mgcv)
+
+
+setwd("/Users/metedibi/Desktop/Dersler/IE360/hw4")
+data<-read.csv(file = "project.csv", header = TRUE) 
+data$Date<-as.Date(data$Date, format = "%Y-%m-%d")
+day.hour <- seq(1, length = length(data[, 3]), by = 1/24)
+cons <- zoo(data[, 3], day.hour)
+mean_cons<-aggregate(cons, floor, mean)
+mean_cons<-as.vector(mean_cons)
+dates<-seq(as.Date("2017-01-01"), as.Date("2021-01-07"), by = "days")
+data<-data.table(dates, mean_cons)
+head(data)
+```
+
+
+
+## 1) Initial Analysis
+#### Visual Analysis 
+Next, we proceed by making a simple visual time-series analysis of our measure.
+```{r}
+ggplot(data, aes(x = dates, y = mean_cons)) + geom_line(col = "dark red", alpha = 0.8) + scale_x_date(date_labels = "%b-%Y", breaks = "3 months")  +  theme(text = element_text(size=8), axis.text.x = element_text(angle=90, hjust=1)) + xlab("Time") + ylab("Daily Electricity Consumption (mWh)")
+
+```
+
+
+
+
+The mean of our measure seems to be non-stable: Summers and winters have increased consumptions, most likely due to utilization of air conditioners in summer and radiators in winter. 
+The variance seems to be constant over time, so there is no need to apply Box-Cox transformation. The slightly less-than-normal consumption during Spring 2020(due to lockdowns) could be neglected.
+
+There also seems to be some severe outliers, a majority of these occur as sudden drops in certain periods. When we analyze the date of these outliers, we find out that these are religous or national holidays, in which many factories and workplaces shut down and a large portion of citizens travel abroad, or simply take a day off. 
+
+
+
+
+
+#### Stationarity Test for Initial Data
+Next, we apply the unit root test.
+```{r}
+unt_test=ur.kpss(data$mean_cons) 
+summary(unt_test)
+```
+We achieve a test statistic of 1.37, which rejects the null hypothesis that the data can be considered stationary. In the next sections, we will modify some outliers and engage in a differencing procedure in order to stationarize our data.
+
+
+
+
+
+
+
+
+
+
+
+## 2) Modifying Outliers
+In order to tackle the outlier problem, we mark the %97.5th and %2.5th quantiles of our data, and every value that is lower than the lower bound and higher than the upper bound is flagged. We then "compress" these flagged values to the lower or upper bound.
+```{r}
+lower_bound <- quantile(data$mean_cons, 0.025)
+upper_bound <- quantile(data$mean_cons, 0.975)
+
+data[mean_cons >= upper_bound, is_higher := 1]
+data[is.na(is_higher) == T, is_higher := 0]
+
+data[mean_cons <= lower_bound, is_lower := 1]
+data[is.na(is_lower) == T, is_lower := 0]
+
+
+data[is_lower ==  T, mean_cons := as.numeric(lower_bound)]
+data[is_higher ==  T, mean_cons := as.numeric(upper_bound)]
+
+head(data[is_lower == 1])
+
+data<-data[, -(3:4)]
+```
+
+
+
+
+As can be seen from the data frame, the outliers are flagged and compressed to threshold levels; which, in the lower bound case, is 25647.92 mWh. 
+
+
+
+
+When we observe the line plot of the modified data:
+```{r}
+ggplot(data, aes(x = dates, y = mean_cons)) + geom_line(col = "dark red", alpha = 0.8) + scale_x_date(date_labels = "%b-%Y", breaks = "3 months")  +  theme(text = element_text(size=8), axis.text.x = element_text(angle=90, hjust=1)) + xlab("Time") + ylab("Daily Electricity Consumption (mWh)")
+```
+
+
+
+
+The outliers seem to be less disturbing now, and the overall range of our data has diminished. Although there still exists some outliers, there isn't much we can do for now. We will continue with differencing.
+
+
+
+
+
+
+
+## 3) Non-seasonal & Seasonal Differencing: Transformed Series
+After dealing with outliers, we might want to take a closer look at ACF and PACF. In order to stationarize our data, best course of action would be to take some differences: The degree and the type (seasonal or non-seasonal) of these differences depends on ACF and PACF analysis.
+```{r}
+plot(acf(data$mean_cons, lag.max = 30, plot=FALSE), main = "ACF of Daily Mean Electricity Consumption", lwd=2, xlab="Lag") 
+plot(pacf(data$mean_cons, lag.max = 30, plot=FALSE), main = "PACF of Daily Mean Electricity Consumption", lwd=2, xlab="Lag") 
+```
+
+
+
+
+There seems to be a very large auto correlation, most significantly in lag 1 and 7. So there seems to be both trend (slightly decreasing auto correlation which starts from lag 1) and seasonality of order 7 (slightly decreasing spikes which occur at lag 7,14,21..). This is assumption also confirmed if we analyze partial auto correlations: Strongest spikes occur at lag 1 and 7.
+
+
+In light of our findings above, both a non-seasonal and seasonal differencing should be utilized and would be beneficial. A formula for such a procedure is:
+
+$x_{t}=(X_{t}-X_{t-1})-(X_{t-s}+X_{t-s-1})$
+
+where $x_{t}$ is the transformed series.
+
+
+
+
+
+
+Next, we proceed by carrying out the above procedure:
+```{r}
+data[,dif.7.1:=mean_cons-shift(mean_cons,1)-shift(mean_cons,7)+shift(mean_cons,8)]
+
+new.data<-data[!is.na(dif.7.1)]
+
+
+head(new.data)
+```
+
+
+
+Here is our new data frame, which contains $x_{t}$ (dif.7.1) together with the original series $X_{t}$ (mean_cons). Note that we lost 8 days of data due to differencing.
+
+
+#### Visualization and Analysis of Transformed Series
+When we visually analyze our transformed series:
+```{r}
+ggplot(new.data, aes(x = dates, y = dif.7.1)) + geom_line(col = "dark red", alpha = 0.8) + scale_x_date(date_labels = "%b-%Y", breaks = "3 months")  +  theme(text = element_text(size=8), axis.text.x = element_text(angle=90, hjust=1)) + xlab("Time") + ylab("Transformed Series")
+```
+
+
+
+We see that the transformed series exhibit a pattern that is quite close to random noise. The sudden spikes that occur now and then are probably due to some outliers(resulting from rapid changes in the temperature or some other factors) that we could not model. However, the transformed series are nonetheless seem stationary. 
+
+
+
+
+```{r}
+ggplot(new.data, aes(x=dif.7.1)) +
+        geom_histogram(aes(y=..density..), colour="black", fill="black", bins = 15, alpha=0.25)+ 
+        geom_density(alpha=.3, fill="brown", colour="black") +
+        labs(title = "Histogram of Daily Differenced Electricity Consumption (mWh) in Turkey over 2017-2020", 
+             x = "Transformed Series",
+             y = "Density") +
+        theme_minimal() +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+When we analyze the density histogram of our transformed series, we also see that it is almost perfectly normally distributed, with a mean of 0.
+
+
+
+#### Stationarity Test for Transformed Series
+Finally, we apply a unit root test again to check stationarity of our transformed data:
+```{r}
+unt_test=ur.kpss(new.data$dif.7.1) 
+summary(unt_test)
+```
+
+We fail to reject the ull hypothesis that the data is stationary. Next, we will be making ARMA & Seasonal ARMA modeling to our data.
+
+
+
+
+## 4) Building the Model
+If we check our stationarized data:
+
+
+
+
+```{r}
+plot(acf(new.data$dif.7.1, lag.max = 30, plot=FALSE, na.action = na.pass), main = "ACF of Daily Mean Electricity Consumption", lwd=2, xlab="Lag") 
+plot(pacf(new.data$dif.7.1, lag.max = 30, plot=FALSE, na.action = na.pass), main = "PACF of Daily Mean Electricity Consumption", lwd=2, xlab="Lag") 
+```
+
+
+
+We see a signature pattern:
+ACF: Negative spike at s (s = 7 in our case) and PACF: Negative spikes at s,2s,3s--------->SMA=1
+
+There are also some auto correlation at lag 1 and some partial correlation at lag 1, but they seem quite low and we will neglect them for now. After we model the transformed series, we may deal with them, if they still exist. but for now, there seems to be no other signature pattern other than that of SMA=1.
+
+
+
+
+
+
+Now that we have decided on our degree of ARMA and Seasonal ARMA terms which are(AR=0, MA=0, SAR=0, MA=1), we apply the ARIMA function:
+```{r}
+model1=arima(new.data$dif.7.1,order=c(0,0,0),seasonal=list(order=c(0,0,1), period = 7))
+model1
+```
+
+
+
+Our initial model has a AIC of 24362. We will now try the auto.arima function and see what model it will build on our transformed series.
+
+
+
+
+
+
+
+```{r}
+ts.data<-ts(new.data$dif.7.1,frequency = 7)
+model2=auto.arima(ts.data,seasonal = T, trace= T)
+```
+
+
+
+Auto arima has returned an AIC of 24785, which is a worse model than our initial model. This may have something to do with the structure of the algorithm, what it prioritizes while searching for the best model etc.
+
+
+
+
+So, our final model is AR=0, MA=0,SAR=0,SMA=1. When we inverse transform our series, we should use the formula:
+
+$X_{t}=x_{t}+X_{t-1}+(X_{t-s}-X_{t-s-1})$
+in which s = 7, so:
+$X_{t}=x_{t}+X_{t-1}+(X_{t-7}-X_{t-8})$
+and since we know that $x_{t}$ is modeled by the arima function, we shall apply the inverse transform formula to fitted values of the model.
+
+
+
+
+Inverse transforming the data:
+```{r}
+data[,lag.1:=shift(mean_cons,1)]
+data[,lag.7:=shift(mean_cons,7)]
+data[,lag.8:=shift(mean_cons,8)]
+temp.data<-data[!is.na(lag.8)]
+
+new.data[,fitted.values:=dif.7.1-model1$residuals+temp.data$lag.1+temp.data$lag.7-temp.data$lag.8]
+new.data[,residuals:=mean_cons-fitted.values]
+
+new.data<-new.data[,-3]
+head(new.data)
+```
+
+
+#### Residual Analysis
+Now that we have inverse transformed our data, we will take a look at residuals.
+```{r}
+ggplot(new.data, aes(x = dates, y = residuals)) + geom_line(col = "dark red", alpha = 0.8) + scale_x_date(date_labels = "%b-%Y", breaks = "3 months")  +  theme(text = element_text(size=8), axis.text.x = element_text(angle=90, hjust=1)) + xlab("Time") + ylab("Residuals")
+```
+
+
+
+
+Our residuals seem to be normally distributed: However, the model still seems to have some problems related to special days, and also COVID lockdown period. Further analysis could be made about this, perhaps some regressors that flag these special periods will make the model better. However, this study will conclude only with ARIMA (or SARIMA in our case) modeling.
+
+
+
+
+
+## 5) Forecasting 
+Now, we will make predictions for a 2 week period; namely, between 8th of January and 23rd of January. 
+```{r}
+temp.model<-arima(data$mean_cons, order = c(0,1,0), seasonal = list(order = c(0,1,1), period = 7))
+forecasted=predict(temp.model, n.ahead = 16)$pred
+forecasted<-as.numeric(forecasted)
+
+recent.data<-read.csv(file = "projectrecent.csv", header = TRUE) 
+recent.data$Date<-as.Date(recent.data$Date, format = "%Y-%m-%d")
+day.hour <- seq(1, length = length(recent.data[, 2]), by = 1/24)
+cons <- zoo(recent.data[, 2], day.hour)
+mean_cons.new<-aggregate(cons, floor, mean)
+mean_cons.new<-as.vector(mean_cons.new)
+dates.new<-seq(as.Date("2021-01-08"), as.Date("2021-01-23"), by = "days")
+residuals<-mean_cons.new-forecasted
+
+
+
+consumption<-mean_cons.new
+dates<-dates.new
+
+
+recent.data<-data.table(dates, consumption, forecasted, residuals)
+
+
+
+
+
+ggplot() +
+  geom_line(data=recent.data, aes(x=dates, y=consumption, color="Realized"), lwd=1, col = "black", alpha = 0.85) +
+  geom_line(data=recent.data, aes(x=dates, y=forecasted, color="Forecast"), lwd=1, alpha = 0.6, col = "red") +
+  labs(title = "Predicted vs. Actual Daily Electricity Consumption", x = "Date",y = "Consumption (mWh)") +
+scale_x_date(date_labels = "%d-%m", breaks = "days")  +  theme(text = element_text(size=10), axis.text.x = element_text(angle=90, hjust=1)) 
+
+
+
+```
+FORECASTS: RED
+REALIZED: BLACK
+
+
+Our model seems to predict quite accurately for short time periods; however, as the range of the forecast gets larger, there seems to be some mis-fitting(after 18-01 for example). We start predicting via using realized lagged values. After some time passes, we run out of realized lagged values and we start using our forecasts as realized values, which destabilizes the nature of the model, so the residuals starts getting bigger and bigger and so on. There may also be some problems related to temperature values, which we did not consider while building our model.
+
+
+
+
+We now calculate some statistics related to our model:
+```{r}
+res<-recent.data$residuals
+fit<-recent.data$forecasted
+act<-recent.data$consumption
+
+
+accuracy = function(actual, error){  
+n = length(actual)        
+mean = mean(actual)
+sd = sd(actual)
+FBias = sum(error)/sum(actual)
+MAPE = sum(abs(error/actual))/n 
+MAD = sum(abs(error))/n
+WMAPE = MAD / mean
+r = data.frame(n, mean, sd, error, FBias, MAPE, MAD, WMAPE)
+return(r[1,])
+}
+
+
+
+accuracy(act,res)
+```
+
+
+
+
+These measures alone can unfortunately not decide if a model is accurate or not. In order to compare it with another model, we will create a dummy model, in which we declare that every day's value is the same as the previous week, same day's value.
+
+
+
+
+Creating the "dummy model"
+```{r}
+recent.data[,lag.7:=shift(recent.data$consumption, 7)]
+recent.data<-recent.data[!is.na(lag.7)]
+recent.data$residuals<-recent.data$consumption - recent.data$lag.7
+accuracy(recent.data$consumption,recent.data$residuals)
+```
+
+
+
+
+When we compare 2 models, it is obvious that our model is reasonably accurate.
+
+## 6) Conclusion
+In this study, a seasonal ARMA model was utilized in order to model the electricity consumption of Turkey. We first stationarized the data, which had a really strong seasonality. After modifying the outlier values which resulted from some very high or very low level temperatures, or some national/religous holidays, we somehow ended up with a more variance-stable data. Note that outlier manipulation is a complex issue and we still observed some outliers after our modification. Then, we have found out via ACF and PACF plots, that there exist a standard lag and a seasonal lag(ie. d = 1 and D=1 is needed.). We ended up with a stationary data after making a both seasonal and non-seasonal transformation. After that, The ARMA signature for the transformed data was observed, and we ended up with an SMA=1 model. Although not perfect, the model predicted reasonably accurate results.
+
+Further analysis about modeling the consumption data could be made, especially adding temperature regressors and marking special days as factors could be a good idea. 
+
+
+[Here](hw4.Rmd) you may reach the rmd file of my work.
