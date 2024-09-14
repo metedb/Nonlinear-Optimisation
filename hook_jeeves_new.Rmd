@@ -1,0 +1,183 @@
+---
+title: "Hook&Jeeves"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r}
+#required libraries 
+library(data.table)
+library(ggplot2)
+
+#defining the given function
+x1 = 0
+x2 = 0
+d1 = 0
+d2 = 0
+
+
+assignedFunction <- function(x_1,x_2) {
+(5*x_1 - x_2)^4 + (x_1 - 2)^2 + x_1 -2*x_2 + 12
+}
+
+assignedFunction.changed <- function(lambda) {
+(5*x1 + 5*lambda*d1-x2-lambda*d2)^4 + (x1 + lambda * d1 - 2)^2 + x1 + lambda*d1-2*x2-2*lambda*d2 + 12
+}
+
+optimize(assignedFunction.changed, interval = c(-100,100))
+
+
+```
+
+
+
+
+
+
+```{r}
+
+#defining the Golden Section Method
+GoldenSectionMethod <- function(a,b,e,func) {
+    gamma <- 1.618
+    x <- b - (1/gamma)*(b-a)
+    y <- a + (1/gamma)*(b-a)
+    fx <- func(x)
+    fy <- func(y)
+    counter <- 0
+    solutionTable <- data.table(iteration=counter, a=a, b=b, x=x, y=y, fx=fx, fy=fy)
+    xVector <- c(x)
+    
+    while (b-a>=e) {
+        if (fx > fy) {
+            a <- x
+            x <- y
+            y <- a + (1/gamma)*(b-a)
+            fx <- fy
+            fy <- func(y)
+        }
+        
+        else {
+            b <- y
+            y <- x
+            x <- b - (1/gamma)*(b-a)
+            fy <- fx
+            fx <- func(x)
+        }
+        
+        counter <- counter + 1
+        xVector <- c(xVector, x)
+        tempRow <- data.table(iteration=counter, a=a, b=b, x=x, y=y, fx=fx, fy=fy)
+        solutionTable <- rbind(solutionTable, tempRow)
+    }
+
+    value1 <- c(NA, NA)
+    value2 <- c(NA, NA)
+    for (i in (3:length(xVector))) {
+        tempValue1 <- abs(xVector[i+1]-xVector[i])/abs(xVector[i]-xVector[i-1])
+        tempValue2 <- -log(abs(xVector[i+1]-xVector[i])) + log(abs(xVector[i]-xVector[i-1]))
+        
+        value1 <- c(value1, tempValue1)
+        value2 <- c(value2, tempValue2)
+    }
+    
+    # solutionTable <- cbind(solutionTable, value1, value2)
+    # print(solutionTable)
+    return(x)
+}
+
+
+```
+
+
+
+
+
+
+
+
+
+
+```{r}
+hook_jeeves<-function(f,e,x0){
+  
+  k = 1
+  
+  xk = x0
+
+  iterations = x0
+  
+  
+  values = assignedFunction(x0[1],x0[2])
+  
+  k = 0
+  repeat{
+    
+  alpha = c()
+  i = 1
+
+    repeat{
+    
+      xk_temp = xk
+   
+         if(i == 1){
+        d1 <<- 1
+        d2 <<- 0
+      }
+     
+     if(i == 2){
+       d1 <<- 0
+       d2 <<- 1
+     }
+  
+  x1 <<- xk[1]
+  x2 <<- xk[2]
+  alpha = GoldenSectionMethod(-100,100,0.005,f)
+
+  
+  xk[i] = xk[i] + alpha
+    if(i == 2) break
+     i = i + 1
+
+  
+    }
+  
+  
+  xtemp = xk
+  
+  dk = xtemp - xk_temp
+  d1 <<- dk[1]
+  d2 <<- dk[2]
+  x1 <<- xk_temp[1]
+  x2 <<- xk_temp[2]
+  
+  lambda = GoldenSectionMethod(-100,100,0.005,f)
+
+  xk = xk_temp + lambda*dk
+  
+  iterations = rbind(iterations,xk)
+  values = append(values,assignedFunction(xk[1],xk[2]))
+  
+  if(abs(assignedFunction(xk[1],xk[2]) - assignedFunction(xk_temp[1],xk_temp[2])) <= e) break
+  k = k + 1
+  }
+  df = cbind(c(0:(length(iterations)-1)),iterations,values)
+  colnames(df) = c("Iteration","x1","x2","f(x1,x2)")
+  return(as.data.table(df))
+  
+  
+}
+
+
+```
+
+```{r}
+hook_jeeves(assignedFunction.changed,0.0005,c(0,0))
+hook_jeeves(assignedFunction.changed,0.0001,c(13,-18))
+```
+
